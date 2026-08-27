@@ -1,4 +1,4 @@
-![BuildGhost Logo](assets/logo.png)
+![BuildGhost Logo](assets/buildghost-logo-gh.png)
 
 Official public information portal and landing page for **BuildGhost**, the parent brand and software ecosystem. 
 
