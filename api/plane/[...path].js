@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 
-// Server-side in-memory cache for rotated passcodes during serverless runtime
+// Server-side in-memory cache for rotated passcodes and email safe mode during serverless runtime
 let runtimeCustomPasscodeHash = null;
+let runtimeEmailSafeMode = null; // null = follow process.env.EMAIL_SAFE_MODE !== 'false'
 
 // Vercel Serverless Function: Plane API Proxy, Zero-Trust Gatekeeper & Dynamic Passcode Engine
 export default async function handler(req, res) {
@@ -19,6 +20,12 @@ export default async function handler(req, res) {
   const projectId = process.env.PLANE_PROJECT_ID || '68b3bc6d-0cc1-4b33-8a62-a2be11cb724f';
   const baseUrl = (process.env.PLANE_API_URL || 'https://app.plane.so/api/v1').replace(/\/+$/, '');
   const adminEmail = (process.env.ADMIN_EMAIL || 'buildghost.dev@gmail.com').toLowerCase().trim();
+
+  // Helper to get active email safe mode
+  const getSafeModeStatus = () => {
+    if (runtimeEmailSafeMode !== null) return runtimeEmailSafeMode;
+    return process.env.EMAIL_SAFE_MODE !== 'false';
+  };
 
   // Extract path from query or URL
   const { path } = req.query || {};
@@ -193,6 +200,37 @@ export default async function handler(req, res) {
     });
   }
 
+  // ─── Route: /api/plane/email-mode (Get / Toggle Safe Mode vs Live Broadcast) ───
+  if (subPath === 'email-mode') {
+    if (req.method === 'GET') {
+      return res.status(200).json({
+        safeMode: getSafeModeStatus(),
+        adminEmail,
+      });
+    }
+
+    if (req.method === 'POST') {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+      const { adminEmail: reqAdminEmail, safeMode } = body;
+
+      if ((reqAdminEmail || '').toLowerCase().trim() !== adminEmail) {
+        return res.status(403).json({
+          success: false,
+          error: 'Forbidden: Email delivery mode can only be modified by administrator.',
+        });
+      }
+
+      runtimeEmailSafeMode = safeMode === true;
+      return res.status(200).json({
+        success: true,
+        safeMode: runtimeEmailSafeMode,
+        message: runtimeEmailSafeMode
+          ? 'Safe Mode ON (Admin Only): Dispatches deliver exclusively to admin.'
+          : 'Live Delivery ON: Dispatches broadcast to all subscribed ticket watchers.',
+      });
+    }
+  }
+
   // ─── Route: /api/plane/notify (Direct Resend Email Dispatch) ─────────────
   if (subPath === 'notify' || subPath === 'test-email') {
     if (req.method !== 'POST') {
@@ -201,7 +239,7 @@ export default async function handler(req, res) {
 
     const resendApiKey = process.env.RESEND_API_KEY;
     const resendFrom = process.env.RESEND_FROM || 'noreply@buildghost.site';
-    const isEmailSafeMode = process.env.EMAIL_SAFE_MODE !== 'false'; // default safe mode ON
+    const isEmailSafeMode = getSafeModeStatus();
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
     const { type, issue, actor, comment } = body;
@@ -228,13 +266,14 @@ export default async function handler(req, res) {
     if (type === 'watcher_added') {
       subject = `[Watcher Subscribed] ${actor?.name || 'User'} subscribed to ${issueId}`;
       bodyHtml = `
-        <p><strong>${actor?.name || 'A user'}</strong> (${actor?.email || ''}) subscribed as a watcher to ticket <strong>${issueId}: ${issueTitle}</strong>.</p>
-        <p style="color: #9eadab; font-size: 13px;">You will receive dispatches whenever comments or blocker state updates occur on this ticket.</p>
+        <p>Hello <strong>${actor?.name || 'Contributor'}</strong>,</p>
+        <p>You are now subscribed to receive real-time triage dispatches for ticket <strong>${issueId}: ${issueTitle}</strong>.</p>
+        <p style="color: #9eadab; font-size: 13px;">You will receive alerts whenever new notes are dispatched, blocker statuses are updated, or acceptance criteria are completed on this ticket.</p>
       `;
     } else if (type === 'comment_added') {
       subject = `[New Note Dispatched] Note on ${issueId}: ${issueTitle}`;
       bodyHtml = `
-        <p><strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}) dispatched a note:</p>
+        <p><strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}) dispatched a note on <strong>${issueId}: ${issueTitle}</strong>:</p>
         <div style="background: #0f201b; border-left: 3px solid #65e7ec; padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-family: monospace; font-size: 13px; color: #e7ece5;">
           ${comment || ''}
         </div>
@@ -243,9 +282,9 @@ export default async function handler(req, res) {
       const isBlocked = issue?.blocker_active;
       subject = isBlocked ? `🚨 [P0 BLOCKER FLAGGED] ${issueId}: ${issueTitle}` : `✓ [BLOCKER RESOLVED] ${issueId}: ${issueTitle}`;
       bodyHtml = `
-        <p>Blocker status changed by <strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}):</p>
+        <p>Blocker status changed by <strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}) on <strong>${issueId}: ${issueTitle}</strong>:</p>
         <div style="background: ${isBlocked ? 'rgba(255, 60, 60, 0.15)' : 'rgba(0, 255, 157, 0.15)'}; border: 1px solid ${isBlocked ? '#ff3c3c' : '#00ff9d'}; padding: 12px; margin: 16px 0; border-radius: 4px;">
-          <strong style="color: ${isBlocked ? '#ff3c3c' : '#00ff9d'};">${isBlocked ? '🚨 ACTIVE BLOCKER' : '✓ BLOCKER RESOLVED'}</strong>
+          <strong style="color: ${isBlocked ? '#ff3c3c' : '#00ff9d'};">${isBlocked ? '🚨 ACTIVE P0 BLOCKER' : '✓ BLOCKER RESOLVED'}</strong>
           <p style="margin: 8px 0 0 0; font-size: 13px;">${issue?.blocker_text || issue?.blocker_resolved_text || 'No blocker notes provided.'}</p>
         </div>
       `;
@@ -253,7 +292,7 @@ export default async function handler(req, res) {
       subject = `[Test Dispatch] Email Gateway Verification`;
       bodyHtml = `
         <p>This is a test notification confirming that the BuildGhost Resend email gateway is active and operational.</p>
-        <p style="color: #00ff9d; font-family: monospace; font-size: 12px;">● EMAIL SAFE MODE: ACTIVE (Target: ${adminEmail})</p>
+        <p style="color: #00ff9d; font-family: monospace; font-size: 12px;">● EMAIL GATEWAY STATUS: ONLINE (${isEmailSafeMode ? 'Safe Mode: Admin Only' : 'Live Delivery: Active'})</p>
       `;
     }
 
@@ -266,8 +305,9 @@ export default async function handler(req, res) {
         <div style="font-size: 14px; line-height: 1.6; color: #ced8d1; margin-bottom: 24px;">
           ${bodyHtml}
         </div>
-        <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px; font-size: 12px; color: #9eadab; font-family: monospace;">
-          <span>Automated dispatch from <a href="https://buildghost.site/triage-desk" style="color: #65e7ec; text-decoration: none;">buildghost.site/triage-desk</a></span>
+        <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px; font-size: 11px; color: #9eadab; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5;">
+          <p style="margin: 0 0 6px 0;"><strong>Why did you receive this?</strong> You are subscribed as an active watcher or creator on ticket <strong>${issueId}</strong> in the BuildGhost Triage Desk.</p>
+          <span>Automated dispatch from <a href="https://buildghost.site/triage-desk" style="color: #65e7ec; text-decoration: none; font-family: monospace;">buildghost.site/triage-desk</a></span>
         </div>
       </div>
     `;
