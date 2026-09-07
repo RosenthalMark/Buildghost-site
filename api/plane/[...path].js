@@ -28,17 +28,23 @@ export default async function handler(req, res) {
   };
 
   // Extract path from query or URL
-  const { path } = req.query || {};
   let subPath = '';
-  if (Array.isArray(path)) {
-    subPath = path.join('/');
-  } else if (typeof path === 'string' && path.trim()) {
-    subPath = path;
-  } else {
-    const urlObj = new URL(req.url || '', 'http://localhost');
-    subPath = urlObj.pathname.replace(/^\/api\/plane\/?/, '');
+  if (req.query && req.query.path) {
+    if (Array.isArray(req.query.path)) {
+      subPath = req.query.path.join('/');
+    } else if (typeof req.query.path === 'string') {
+      subPath = req.query.path;
+    }
   }
-  subPath = (subPath || '').replace(/^\/+/, '');
+  if (!subPath && req.url) {
+    try {
+      const urlObj = new URL(req.url, 'http://localhost');
+      subPath = urlObj.searchParams.get('path') || urlObj.pathname.replace(/^\/api\/plane\/?/, '');
+    } catch {
+      subPath = '';
+    }
+  }
+  subPath = (subPath || '').replace(/^\/+/, '').split('?')[0];
 
   // Helper to compute SHA-256
   const hashPasscode = (pw) => {
