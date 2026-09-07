@@ -1,0 +1,15 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/plane/(.*)", "destination": "/api/plane?path=$1" },
+    { "source": "/api/:match*", "destination": "/api/:match*" },
+    { "source": "/triage-desk", "destination": "/triage-desk/index.html" },
+    { "source": "/triage-desk/:path*", "destination": "/triage-desk/index.html" },
+    { "source": "/triage", "destination": "/triage-desk/index.html" },
+    { "source": "/triage/:path*", "destination": "/triage-desk/index.html" },
+    { "source": "/issue-tracker", "destination": "/triage-desk/index.html" },
+    { "source": "/issue-tracker/:path*", "destination": "/triage-desk/index.html" },
+    { "source": "/issues", "destination": "/triage-desk/index.html" },
+    { "source": "/issues/:path*", "destination": "/triage-desk/index.html" }
+  ]
+}
