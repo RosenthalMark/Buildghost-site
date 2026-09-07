@@ -10,6 +10,8 @@
     { "source": "/issue-tracker", "destination": "/triage-desk/index.html" },
     { "source": "/issue-tracker/:path*", "destination": "/triage-desk/index.html" },
     { "source": "/issues", "destination": "/triage-desk/index.html" },
-    { "source": "/issues/:path*", "destination": "/triage-desk/index.html" }
+    { "source": "/issues/:path*", "destination": "/triage-desk/index.html" },
+    { "source": "/demo", "destination": "/triage-desk/index.html" },
+    { "source": "/demo/:path*", "destination": "/triage-desk/index.html" }
   ]
 }
