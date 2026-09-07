@@ -193,6 +193,113 @@ export default async function handler(req, res) {
     });
   }
 
+  // ─── Route: /api/plane/notify (Direct Resend Email Dispatch) ─────────────
+  if (subPath === 'notify' || subPath === 'test-email') {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const resendFrom = process.env.RESEND_FROM || 'noreply@buildghost.site';
+    const isEmailSafeMode = process.env.EMAIL_SAFE_MODE !== 'false'; // default safe mode ON
+
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const { type, issue, actor, comment } = body;
+
+    // Recipient list: Strictly enforce admin-only in Safe Mode
+    let targetRecipients = [adminEmail];
+    if (!isEmailSafeMode && issue?.watchers && Array.isArray(issue.watchers)) {
+      targetRecipients = Array.from(new Set([adminEmail, ...issue.watchers]));
+    }
+
+    if (!resendApiKey) {
+      return res.status(200).json({
+        status: 'skipped',
+        warning: 'RESEND_API_KEY is not configured in Vercel environment variables.',
+        targetRecipients,
+      });
+    }
+
+    const issueTitle = issue?.title || issue?.name || 'Triage Ticket';
+    const issueId = issue?.id || 'TICKET';
+    let subject = `[Triage-Desk] Activity on ${issueId}`;
+    let bodyHtml = `<p>Activity reported on ticket <strong>${issueTitle}</strong> by <em>${actor?.name || 'Contributor'}</em>.</p>`;
+
+    if (type === 'watcher_added') {
+      subject = `[Watcher Subscribed] ${actor?.name || 'User'} subscribed to ${issueId}`;
+      bodyHtml = `
+        <p><strong>${actor?.name || 'A user'}</strong> (${actor?.email || ''}) subscribed as a watcher to ticket <strong>${issueId}: ${issueTitle}</strong>.</p>
+        <p style="color: #9eadab; font-size: 13px;">You will receive dispatches whenever comments or blocker state updates occur on this ticket.</p>
+      `;
+    } else if (type === 'comment_added') {
+      subject = `[New Note Dispatched] Note on ${issueId}: ${issueTitle}`;
+      bodyHtml = `
+        <p><strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}) dispatched a note:</p>
+        <div style="background: #0f201b; border-left: 3px solid #65e7ec; padding: 12px 16px; margin: 16px 0; border-radius: 4px; font-family: monospace; font-size: 13px; color: #e7ece5;">
+          ${comment || ''}
+        </div>
+      `;
+    } else if (type === 'blocker_toggled') {
+      const isBlocked = issue?.blocker_active;
+      subject = isBlocked ? `🚨 [P0 BLOCKER FLAGGED] ${issueId}: ${issueTitle}` : `✓ [BLOCKER RESOLVED] ${issueId}: ${issueTitle}`;
+      bodyHtml = `
+        <p>Blocker status changed by <strong>${actor?.name || 'Contributor'}</strong> (${actor?.email || ''}):</p>
+        <div style="background: ${isBlocked ? 'rgba(255, 60, 60, 0.15)' : 'rgba(0, 255, 157, 0.15)'}; border: 1px solid ${isBlocked ? '#ff3c3c' : '#00ff9d'}; padding: 12px; margin: 16px 0; border-radius: 4px;">
+          <strong style="color: ${isBlocked ? '#ff3c3c' : '#00ff9d'};">${isBlocked ? '🚨 ACTIVE BLOCKER' : '✓ BLOCKER RESOLVED'}</strong>
+          <p style="margin: 8px 0 0 0; font-size: 13px;">${issue?.blocker_text || issue?.blocker_resolved_text || 'No blocker notes provided.'}</p>
+        </div>
+      `;
+    } else if (type === 'test_email') {
+      subject = `[Test Dispatch] Email Gateway Verification`;
+      bodyHtml = `
+        <p>This is a test notification confirming that the BuildGhost Resend email gateway is active and operational.</p>
+        <p style="color: #00ff9d; font-family: monospace; font-size: 12px;">● EMAIL SAFE MODE: ACTIVE (Target: ${adminEmail})</p>
+      `;
+    }
+
+    const emailLayout = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #060c0b; color: #e7ece5; padding: 32px 24px; border-radius: 8px; max-width: 600px; margin: 0 auto; border: 1px solid rgba(255,255,255,0.12);">
+        <div style="border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-family: monospace; font-size: 11px; letter-spacing: 0.16em; color: #65e7ec; text-transform: uppercase; font-weight: 800;">BUILDGHOST // TRIAGE-DESK</span>
+          <span style="font-family: monospace; font-size: 11px; color: #9eadab;">${issueId}</span>
+        </div>
+        <div style="font-size: 14px; line-height: 1.6; color: #ced8d1; margin-bottom: 24px;">
+          ${bodyHtml}
+        </div>
+        <div style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 16px; font-size: 12px; color: #9eadab; font-family: monospace;">
+          <span>Automated dispatch from <a href="https://buildghost.site/triage-desk" style="color: #65e7ec; text-decoration: none;">buildghost.site/triage-desk</a></span>
+        </div>
+      </div>
+    `;
+
+    try {
+      const emailRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: `BuildGhost Triage Desk <${resendFrom}>`,
+          to: targetRecipients,
+          subject: isEmailSafeMode ? `[TEST MODE - Triage-Desk] ${subject}` : `[Triage-Desk] ${subject}`,
+          html: isEmailSafeMode
+            ? `<div style="background: #2a1f05; border: 1px solid #f5c778; color: #f5c778; padding: 8px 12px; font-size: 11px; margin-bottom: 16px; font-family: monospace; border-radius: 4px;">⚠️ <strong>EMAIL SAFE MODE ACTIVE</strong> — Test dispatch delivered ONLY to Admin (${adminEmail}). External stakeholders are muted.</div>` + emailLayout
+            : emailLayout,
+        }),
+      });
+
+      const resData = await emailRes.json();
+      return res.status(emailRes.ok ? 200 : 400).json({
+        success: emailRes.ok,
+        result: resData,
+        targetRecipients,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: 'Resend dispatch failed', details: err.message });
+    }
+  }
+
   // ─── Standard Plane API Gateway Operations ─────────────────────────────
   if (!apiKey) {
     return res.status(500).json({

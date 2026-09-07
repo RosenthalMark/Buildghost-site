@@ -6,8 +6,8 @@ export default async function handler(req, res) {
 
   const resendApiKey = process.env.RESEND_API_KEY;
   const resendFrom = process.env.RESEND_FROM || 'noreply@buildghost.site';
-  const adminEmail = process.env.ADMIN_EMAIL || '';
-  const isEmailSafeMode = process.env.EMAIL_SAFE_MODE === 'true';
+  const adminEmail = process.env.ADMIN_EMAIL || 'buildghost.dev@gmail.com';
+  const isEmailSafeMode = process.env.EMAIL_SAFE_MODE !== 'false';
 
   const payload = req.body || {};
   const event = payload.event || payload.action || 'issue.updated';
