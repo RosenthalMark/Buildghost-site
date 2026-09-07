@@ -1,17 +1,22 @@
 {
   "cleanUrls": true,
-  "rewrites": [
-    { "source": "/api/plane/(.*)", "destination": "/api/plane?path=$1" },
-    { "source": "/api/:match*", "destination": "/api/:match*" },
-    { "source": "/triage-desk", "destination": "/triage-desk/index.html" },
-    { "source": "/triage-desk/:path*", "destination": "/triage-desk/index.html" },
-    { "source": "/triage", "destination": "/triage-desk/index.html" },
-    { "source": "/triage/:path*", "destination": "/triage-desk/index.html" },
-    { "source": "/issue-tracker", "destination": "/triage-desk/index.html" },
-    { "source": "/issue-tracker/:path*", "destination": "/triage-desk/index.html" },
-    { "source": "/issues", "destination": "/triage-desk/index.html" },
-    { "source": "/issues/:path*", "destination": "/triage-desk/index.html" },
-    { "source": "/demo", "destination": "/triage-desk/index.html" },
-    { "source": "/demo/:path*", "destination": "/triage-desk/index.html" }
+  "routes": [
+    { "src": "/api/plane/(.*)", "dest": "/api/plane?path=$1" },
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/assets/(.*)", "dest": "/assets/$1" },
+    { "src": "/triage-desk/assets/(.*)", "dest": "/triage-desk/assets/$1" },
+    { "src": "/triage-desk/demo", "dest": "/triage-desk/index.html" },
+    { "src": "/triage-desk/demo/(.*)", "dest": "/triage-desk/index.html" },
+    { "src": "/demo", "dest": "/triage-desk/index.html" },
+    { "src": "/demo/(.*)", "dest": "/triage-desk/index.html" },
+    { "src": "/triage/demo", "dest": "/triage-desk/index.html" },
+    { "src": "/triage/demo/(.*)", "dest": "/triage-desk/index.html" },
+    { "src": "/triage-desk", "dest": "/triage-desk/index.html" },
+    { "src": "/triage-desk/(.*)", "dest": "/triage-desk/index.html" },
+    { "src": "/triage", "dest": "/triage-desk/index.html" },
+    { "src": "/triage/(.*)", "dest": "/triage-desk/index.html" },
+    { "src": "/issues", "dest": "/triage-desk/index.html" },
+    { "src": "/issues/(.*)", "dest": "/triage-desk/index.html" },
+    { "handle": "filesystem" }
   ]
 }
