@@ -89,7 +89,7 @@ export default async function handler(req, res) {
     }
 
     // 4. Default baseline passcodes
-    const defaults = ['buildghost', 'ghostops', 'buildghost2026', 'triage2026', 'sextpanther'];
+    const defaults = ['Harleydyna1!', 'harleydyna1!', 'buildghost', 'ghostops', 'buildghost2026', 'triage2026', 'sextpanther'];
     defaults.forEach((p) => validHashes.add(hashPasscode(p)));
 
     return validHashes;
