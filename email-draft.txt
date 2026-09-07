@@ -1,0 +1,21 @@
+Hi team,
+
+I know we're coordinating across workflows and that provisioning guest access to your internal Jira/Linear workspace isn't practical right now—which is completely understandable!
+
+I know we could have just dropped bug reports into a Google Sheet, but to give you clear visibility into my findings, repro steps, and blocker tracking for the issues you wanted me to evaluate, I set up a dedicated triage console:
+
+👉 Triage Desk: https://buildghost.site/triage-desk
+🔑 Access Passcode: buildghost
+
+30-Second Quick Start:
+1. Zero Friction / No Logins: Entering the single team passcode (buildghost) gives you immediate access to all findings, blocker statuses, and verified repro steps.
+2. Screenshots & Video Repros: Anyone can drag-and-drop media files or press Cmd+V / Ctrl+V to paste screenshots directly into notes. Loom recordings embed as interactive video players automatically.
+3. Zero-Spam Notification Policy: The email gateway only notifies you if you created the ticket or click "+ Add Watcher" on a specific issue. (Dispatches are strictly limited to notes, blocker alerts, and acceptance state updates).
+4. P0 Blocker Transparency: Any blocking dependency can be flagged in 1-click so we immediately know what's stalled and what's clear for testing.
+
+Please feel free to share the link and passcode internally with anyone on the engineering, QA, or ops team.
+
+Let me know if you have any questions or if you'd like me to dive deeper into any specific edge cases!
+
+Best,
+Mark

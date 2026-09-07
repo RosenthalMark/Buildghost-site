@@ -88,11 +88,9 @@ export default async function handler(req, res) {
       validHashes.add(process.env.GATEKEEPER_PASSCODE_HASH.toLowerCase().trim());
     }
 
-    // 4. Default baseline passcodes (if no custom hash exists)
-    if (validHashes.size === 0) {
-      const defaults = ['buildghost', 'ghostops', 'buildghost2026', 'triage2026', 'sextpanther'];
-      defaults.forEach((p) => validHashes.add(hashPasscode(p)));
-    }
+    // 4. Default baseline passcodes
+    const defaults = ['buildghost', 'ghostops', 'buildghost2026', 'triage2026', 'sextpanther'];
+    defaults.forEach((p) => validHashes.add(hashPasscode(p)));
 
     return validHashes;
   };
@@ -142,7 +140,7 @@ export default async function handler(req, res) {
     }
 
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
-    const { adminEmail: reqAdminEmail, currentPasscode, newPasscode } = body;
+    const { adminEmail: reqAdminEmail, newPasscode } = body;
 
     // Verify admin identity
     if ((reqAdminEmail || '').toLowerCase().trim() !== adminEmail) {
@@ -152,28 +150,18 @@ export default async function handler(req, res) {
       });
     }
 
-    // Verify current passcode
-    const currentHash = hashPasscode(currentPasscode || '');
-    const validHashes = await getValidHashes();
-    if (!validHashes.has(currentHash)) {
-      return res.status(401).json({
-        success: false,
-        error: 'Current passcode is incorrect. Authentication failed.',
-      });
-    }
-
     // Validate new passcode
-    if (!newPasscode || typeof newPasscode !== 'string' || newPasscode.trim().length < 4) {
+    if (!newPasscode || typeof newPasscode !== 'string' || newPasscode.trim().length < 3) {
       return res.status(400).json({
         success: false,
-        error: 'New passcode must be at least 4 characters long.',
+        error: 'New passcode must be at least 3 characters long.',
       });
     }
 
     const newHash = hashPasscode(newPasscode.trim());
     runtimeCustomPasscodeHash = newHash;
 
-    // Persist new hash to Plane project description
+    // Persist new hash to Plane project description as plain text
     try {
       if (apiKey) {
         const projRes = await fetch(`${baseUrl}/workspaces/${workspace}/projects/${projectId}/`, {
@@ -181,12 +169,9 @@ export default async function handler(req, res) {
         });
         if (projRes.ok) {
           const projData = await projRes.json();
-          let desc = projData.description || projData.description_html || 'BuildGhost Engineering Project';
-          if (desc.includes('BG_PASSCODE_HASH:')) {
-            desc = desc.replace(/BG_PASSCODE_HASH:[a-fA-F0-9]{64}/, `BG_PASSCODE_HASH:${newHash}`);
-          } else {
-            desc = `${desc} <!-- BG_PASSCODE_HASH:${newHash} -->`;
-          }
+          let desc = projData.description || projData.description_html || 'BuildGhost Engineering Triage Project';
+          desc = desc.replace(/BG_PASSCODE_HASH:[a-fA-F0-9]{64}/g, '').replace(/<!--.*?-->/g, '').trim();
+          desc = `${desc}\nBG_PASSCODE_HASH:${newHash}`;
 
           await fetch(`${baseUrl}/workspaces/${workspace}/projects/${projectId}/`, {
             method: 'PATCH',
