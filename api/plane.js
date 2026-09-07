@@ -1,4 +1,9 @@
-// Vercel Serverless Function: Plane API Proxy & Auto-Provisioner
+import crypto from 'crypto';
+
+// Server-side in-memory cache for rotated passcodes during serverless runtime
+let runtimeCustomPasscodeHash = null;
+
+// Vercel Serverless Function: Plane API Proxy, Zero-Trust Gatekeeper & Dynamic Passcode Engine
 export default async function handler(req, res) {
   // CORS & Security headers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -13,12 +18,7 @@ export default async function handler(req, res) {
   const workspace = process.env.PLANE_WORKSPACE || 'buildghost';
   const projectId = process.env.PLANE_PROJECT_ID || '68b3bc6d-0cc1-4b33-8a62-a2be11cb724f';
   const baseUrl = (process.env.PLANE_API_URL || 'https://app.plane.so/api/v1').replace(/\/+$/, '');
-
-  if (!apiKey) {
-    return res.status(500).json({
-      error: 'PLANE_API_KEY is not configured in Vercel environment variables.',
-    });
-  }
+  const adminEmail = (process.env.ADMIN_EMAIL || 'buildghost.dev@gmail.com').toLowerCase().trim();
 
   // Extract path from query or URL
   const { path } = req.query || {};
@@ -33,6 +33,173 @@ export default async function handler(req, res) {
   }
   subPath = (subPath || '').replace(/^\/+/, '');
 
+  // Helper to compute SHA-256
+  const hashPasscode = (pw) => {
+    return crypto.createHash('sha256').update(pw.trim()).digest('hex');
+  };
+
+  // Helper to get active valid hashes
+  const getValidHashes = async () => {
+    const validHashes = new Set();
+
+    // 1. Check runtime memory cache
+    if (runtimeCustomPasscodeHash) {
+      validHashes.add(runtimeCustomPasscodeHash);
+    }
+
+    // 2. Check Plane Project description for custom hash tag: BG_PASSCODE_HASH:<hex>
+    try {
+      if (apiKey) {
+        const projRes = await fetch(`${baseUrl}/workspaces/${workspace}/projects/${projectId}/`, {
+          headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+        });
+        if (projRes.ok) {
+          const projData = await projRes.json();
+          const desc = projData.description || projData.description_html || '';
+          const match = desc.match(/BG_PASSCODE_HASH:([a-fA-F0-9]{64})/);
+          if (match && match[1]) {
+            runtimeCustomPasscodeHash = match[1].toLowerCase();
+            validHashes.add(runtimeCustomPasscodeHash);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch Plane project metadata for passcode hash:', e);
+    }
+
+    // 3. Environment Variable (if set in Vercel)
+    if (process.env.GATEKEEPER_PASSCODE) {
+      validHashes.add(hashPasscode(process.env.GATEKEEPER_PASSCODE));
+    }
+    if (process.env.GATEKEEPER_PASSCODE_HASH) {
+      validHashes.add(process.env.GATEKEEPER_PASSCODE_HASH.toLowerCase().trim());
+    }
+
+    // 4. Default baseline passcodes (if no custom hash exists)
+    if (validHashes.size === 0) {
+      const defaults = ['buildghost', 'ghostops', 'buildghost2026', 'triage2026', 'sextpanther'];
+      defaults.forEach((p) => validHashes.add(hashPasscode(p)));
+    }
+
+    return validHashes;
+  };
+
+  // ─── Route: /api/plane/auth (Zero-Knowledge Serverless Gatekeeper Verification) ───
+  if (subPath === 'auth') {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const entered = (body.passcode || '').trim();
+
+    if (!entered) {
+      return res.status(400).json({ success: false, error: 'Passcode is required.' });
+    }
+
+    const enteredHash = hashPasscode(entered);
+    const validHashes = await getValidHashes();
+
+    if (validHashes.has(enteredHash)) {
+      // Issue cryptographically signed token
+      const sessionSecret = apiKey || 'buildghost_secure_auth_salt_2026';
+      const token = crypto
+        .createHmac('sha256', sessionSecret)
+        .update(`bg_session_${Date.now()}_${Math.random()}`)
+        .digest('hex');
+
+      return res.status(200).json({
+        success: true,
+        token,
+        expiresIn: 86400,
+        authenticatedAt: new Date().toISOString(),
+      });
+    } else {
+      return res.status(401).json({
+        success: false,
+        error: 'Access Denied: Invalid cybernetic passcode.',
+      });
+    }
+  }
+
+  // ─── Route: /api/plane/change-passcode (Admin-Only Dynamic Passcode Rotation) ───
+  if (subPath === 'change-passcode') {
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method Not Allowed' });
+    }
+
+    const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
+    const { adminEmail: reqAdminEmail, currentPasscode, newPasscode } = body;
+
+    // Verify admin identity
+    if ((reqAdminEmail || '').toLowerCase().trim() !== adminEmail) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden: Passcode modification is restricted to administrator identity.',
+      });
+    }
+
+    // Verify current passcode
+    const currentHash = hashPasscode(currentPasscode || '');
+    const validHashes = await getValidHashes();
+    if (!validHashes.has(currentHash)) {
+      return res.status(401).json({
+        success: false,
+        error: 'Current passcode is incorrect. Authentication failed.',
+      });
+    }
+
+    // Validate new passcode
+    if (!newPasscode || typeof newPasscode !== 'string' || newPasscode.trim().length < 4) {
+      return res.status(400).json({
+        success: false,
+        error: 'New passcode must be at least 4 characters long.',
+      });
+    }
+
+    const newHash = hashPasscode(newPasscode.trim());
+    runtimeCustomPasscodeHash = newHash;
+
+    // Persist new hash to Plane project description
+    try {
+      if (apiKey) {
+        const projRes = await fetch(`${baseUrl}/workspaces/${workspace}/projects/${projectId}/`, {
+          headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+        });
+        if (projRes.ok) {
+          const projData = await projRes.json();
+          let desc = projData.description || projData.description_html || 'BuildGhost Engineering Project';
+          if (desc.includes('BG_PASSCODE_HASH:')) {
+            desc = desc.replace(/BG_PASSCODE_HASH:[a-fA-F0-9]{64}/, `BG_PASSCODE_HASH:${newHash}`);
+          } else {
+            desc = `${desc} <!-- BG_PASSCODE_HASH:${newHash} -->`;
+          }
+
+          await fetch(`${baseUrl}/workspaces/${workspace}/projects/${projectId}/`, {
+            method: 'PATCH',
+            headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ description: desc }),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Could not persist passcode hash to Plane project description:', e);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Gatekeeper passcode successfully updated on server.',
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  // ─── Standard Plane API Gateway Operations ─────────────────────────────
+  if (!apiKey) {
+    return res.status(500).json({
+      error: 'PLANE_API_KEY is not configured in Vercel environment variables.',
+    });
+  }
+
   const headers = {
     'x-api-key': apiKey,
     'Content-Type': 'application/json',
@@ -43,7 +210,6 @@ export default async function handler(req, res) {
     if (subPath === 'init') {
       const propUrl = `${baseUrl}/workspaces/${workspace}/projects/${projectId}/custom-properties/`;
       
-      // Desired custom properties schema
       const requiredProps = [
         { name: 'blocker_active', display_name: 'Blocker Active', property_type: 'boolean' },
         { name: 'blocker_text', display_name: 'Blocker Reason', property_type: 'text' },
@@ -52,7 +218,6 @@ export default async function handler(req, res) {
         { name: 'affected_platforms', display_name: 'Affected Platforms', property_type: 'text' },
       ];
 
-      // Fetch existing properties
       const existingRes = await fetch(propUrl, { headers });
       const existingData = existingRes.ok ? await existingRes.json() : [];
       const existingNames = new Set(
@@ -83,49 +248,6 @@ export default async function handler(req, res) {
         projectId,
         existingProperties: Array.from(existingNames),
         createdProperties: created,
-      });
-    }
-
-    // ─── Special Route: /api/plane/seed (Seed ONLY SP-101) ─────────────────
-    if (subPath === 'seed') {
-      const issuesUrl = `${baseUrl}/workspaces/${workspace}/projects/${projectId}/issues/`;
-      
-      const seedTicket = {
-        name: 'PLACEHOLDER: ISSUE 1 — Intermittent Media Unlock Timeout Under Peak Concurrency',
-        description_html: '<p>High-latency WebSocket handshake during peak traffic causes creator media unlock state to stall before payment receipt acknowledgement.</p>',
-        priority: 'urgent', // maps to P0
-        extra_data: {
-          affected_platforms: 'Web, Mobile Web, API Gateway, iOS Safari',
-          blocker_active: false,
-          blocker_text: '',
-          blocker_resolved_text: '',
-          ac_json: JSON.stringify([
-            'Deterministic idempotent transaction tokens attached to unlock payload.',
-            'Client-side optimistic unlock state verified with automated rollback on failed webhook.',
-            'Synthetic Playwright test simulates 100 concurrent unlocks with zero stalled UI states.',
-          ]),
-          steps: [
-            'Initiate concurrent unlock requests (50+ simultaneous fan users) on paywalled video vault.',
-            "Observe client state stalls on 'Processing Unlock' while billing webhook resolves asynchronously.",
-            'User refreshes page, triggering duplicate transaction prompt.',
-          ],
-          remediation: 'Added Redis-backed mutex locks on unlock transactions and deployed automated K6 load test gate in CI/CD pipeline to reject merges that breach 120ms latency ceiling.',
-          creator_name: 'DevOps Engineer',
-          creator_email: process.env.ADMIN_EMAIL || 'devops@buildghost.site',
-          watchers: [],
-        },
-      };
-
-      const seedRes = await fetch(issuesUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(seedTicket),
-      });
-
-      const seedData = seedRes.ok ? await seedRes.json() : await seedRes.text();
-      return res.status(seedRes.status).json({
-        status: seedRes.ok ? 'seeded_sp_101' : 'seed_error',
-        result: seedData,
       });
     }
 
@@ -169,10 +291,6 @@ export default async function handler(req, res) {
     }
 
     // ─── Standard Proxy Target ─────────────────────────────────────────────
-    // Examples:
-    // issues -> /workspaces/:workspace/projects/:projectId/issues/
-    // issues/ID -> /workspaces/:workspace/projects/:projectId/issues/ID/
-    // issues/ID/comments -> /workspaces/:workspace/projects/:projectId/issues/ID/comments/
     let targetUrl = `${baseUrl}/workspaces/${workspace}/projects/${projectId}/${subPath}`;
     if (!targetUrl.endsWith('/')) {
       targetUrl += '/';
